@@ -13,20 +13,26 @@ Trie	*root_node, **trie_nodes, *max_depth_leaf;
 // data structures for dfs based trie construction
 Band	dfs_cuts[MAX_DEPTH];
 int		dfs_uncuts[MAX_DEPTH][NFIELDS];	// field bands not cut yet
-Rule	*dfs_rules_strip[MAX_DEPTH];
+Rule	*dfs_rules_strip[MAX_DEPTH][BAND_SIZE];
 int		dfs_rule_redun[MAX_DEPTH][REDUN_NRULES][REDUN_NCHECK];
 
 int		*rule_map_p2c, *rule_map_c2p;	// mapping rule order between parent and child
-int		curr_depth;
 
+
+
+/******************************************************************************
+ *
+ * Section for rule redundancy checking and selection
+ *
+ *****************************************************************************/
 
 
 // check rule redundancy by efficiently comparing with earlier included rules in child
-int check_rule_redun(Range *r0, Rule *rules_child, int rid_parent, Band *cut)
+int check_rule_redun(Range *r0, Rule *rules_child, int rid_parent, Band *cut, int depth)
 {
 	int				rid_p, rid_c, i, k = 0;
 	Range			r1;
-	int				*redun_list = dfs_rule_redun[curr_depth][rid_parent];
+	int				*redun_list = dfs_rule_redun[depth][rid_parent];
 
 	for (i = 0; i < REDUN_NCHECK; i++) {
 		if ((rid_p = redun_list[i]) == -1)
@@ -44,7 +50,7 @@ int check_rule_redun(Range *r0, Rule *rules_child, int rid_parent, Band *cut)
 
 // select rules from parent that overlap with the cut space, check rule redundancy only for
 // nodes with #rules < REDUN_NRULES. both parent and child rules are in stripped forms
-int select_rules(Rule *rules_parent, Rule *rules_child, int nrules_parent, Band *cut)
+int select_rules(Rule *rules_parent, Rule *rules_child, int nrules_parent, Band *cut, int depth)
 {
 	int		nrules_child = 0, is_redun, i;
 	Range	*range;
@@ -58,7 +64,7 @@ int select_rules(Rule *rules_parent, Rule *rules_child, int nrules_parent, Band 
 		if (nrules_parent > REDUN_NRULES || nrules_child == 0)
 			is_redun = 0;
 		else
-			is_redun = check_rule_redun(range, rules_child, i, cut);
+			is_redun = check_rule_redun(range, rules_child, i, cut, depth);
 		if (!is_redun) {
 			rule_map_p2c[i] = nrules_child;
 			rule_map_c2p[nrules_child] = i;
@@ -72,7 +78,7 @@ int select_rules(Rule *rules_parent, Rule *rules_child, int nrules_parent, Band 
 
 void calc_rule_redun(Trie *v, Band *cut)
 {
-	Rule	*rules = dfs_rules_strip[v->depth];
+	Rule	*rules = dfs_rules_strip[v->depth][v->cut.val];
 	Rule	*ri, *rj;
 	int		i, j, dim, nredun;
 	
@@ -100,17 +106,24 @@ void calc_rule_redun(Trie *v, Band *cut)
 
 
 
+/******************************************************************************
+ *
+ * Section for cut decision making
+ *
+ *****************************************************************************/
+
+
 int try_cut(Trie *v, Band *cut, int *total_rules)
 {
 	int		val, nrules, max_nrules = 0;
 	Rule	*rules_parent, *rules_child;
 
-	rules_parent = dfs_rules_strip[v->depth];
+	rules_parent = dfs_rules_strip[v->depth][v->cut.val];
 	rules_child = malloc(v->nrules*sizeof(Rule));
 	*total_rules = 0;
 
 	for (cut->val = 0; cut->val < BAND_SIZE; cut->val++) {
-		nrules = select_rules(rules_parent, rules_child, v->nrules, cut);
+		nrules = select_rules(rules_parent, rules_child, v->nrules, cut, v->depth);
 		if (nrules > max_nrules)
 			max_nrules = nrules;
 		*total_rules += nrules;
@@ -154,44 +167,111 @@ void choose_cut(Trie *v)
 }
 
 
+/******************************************************************************
+ *
+ * Section for node redundancy handling
+ *
+ *****************************************************************************/
 
-// cut v with two bands from the five fields
+// three results for redundant node check:
+// INVALID: same ruleset found, but not valid for redundancy due to port cut
+enum {NOTFOUND, FOUND, INVALID};
+
+
+
+// return the child id with identical rule set, return -1 if not found
+int find_node(Rule **ruleset, int nrules, Trie *parent)
+{
+	Rule	**rules_child;
+	int		nrules_child, i;
+	
+	// reverse order checking as neighbor nodes are more likely to be redundant
+	for (i = parent->nchildren-1; i >= 0; i--) {
+		nrules_child = parent->children[i].nrules;
+		if (nrules_child != nrules)
+			continue;
+		rules_child = parent->children[i].rules;
+		if (memcmp(ruleset, rules_child, nrules*sizeof(Rule *)) == 0)
+			break;
+	}
+	return i;
+}
+
+
+
+int check_node_redun(Trie *u)
+{
+	int		child_id, i;
+	Rule	*rules0, *rules1;
+	Range	*r0, *r1;
+
+	child_id = find_node(u->rules, u->nrules, u->parent);
+	if (child_id == -1 || u->cut.dim < 2 || u->cut.dim > 3)
+		return child_id;
+
+	// need more inspection for port cuts even rules are identical
+	rules0 = dfs_rules_strip[u->depth][u->cut.val];
+	rules1 = dfs_rules_strip[u->depth][u->parent->children[child_id].cut.val];
+	for (i = 0; i < u->nrules; i++) {
+		r0 = &rules0[i].field[u->cut.dim];
+		r1 = &rules1[i].field[u->cut.dim];
+		if (r0->lo != r1->lo || r0->hi != r1->hi)
+			break;
+	}
+	if (i == u->nrules)
+		return -1;
+	else
+		return child_id;
+}
+
+
+/******************************************************************************
+ *
+ * Section for major trie construction functions 
+ *
+ *****************************************************************************/
+
 Trie* new_child(Trie *v, Band *cut)
 {
 	Trie	*u;
 	Rule	*rules_parent, *rules_child;
-	int		i;
+	int		redund, i;
    
-	if (dfs_rules_strip[curr_depth+1] == NULL)
-		dfs_rules_strip[curr_depth+1] = malloc(v->nrules*sizeof(Rule));
+	if (dfs_rules_strip[v->depth+1][cut->val] == NULL)
+		dfs_rules_strip[v->depth+1][cut->val] = malloc(v->nrules*sizeof(Rule));
 	else
-		dfs_rules_strip[curr_depth+1] =
-			realloc(dfs_rules_strip[curr_depth+1], v->nrules*sizeof(Rule));
-	rules_parent = dfs_rules_strip[curr_depth];
-	rules_child  = dfs_rules_strip[curr_depth+1];
+		dfs_rules_strip[v->depth+1][cut->val] =
+			realloc(dfs_rules_strip[v->depth+1][cut->val], v->nrules*sizeof(Rule));
+	rules_parent = dfs_rules_strip[v->depth][v->cut.val];
+	rules_child  = dfs_rules_strip[v->depth+1][cut->val];
 
 	u = &v->children[v->nchildren];
-	u->nrules = select_rules(rules_parent, rules_child, v->nrules, cut);
+	u->nrules = select_rules(rules_parent, rules_child, v->nrules, cut, v->depth);
 	if (u->nrules == 0)
 		return NULL;
-	// TODO: delay node redundancy implementation
-#if 0
-	redund = check_node_redun(v);
-	if (redund)
-		return NULL;
-#endif
 	u->rules = malloc(u->nrules*sizeof(Rule *));
 	for (i = 0; i < u->nrules; i++)
 		u->rules[i] = v->rules[rule_map_c2p[i]];
 	u->parent = v;
+	u->cut = *cut;
 	u->depth = v->depth + 1;
 	u->id = total_nodes;
-	u->child_id = v->nchildren++;
-	u->cut = *cut;
+	u->child_id = v->nchildren;
 	u->type = u->nrules > LEAF_RULES ? NONLEAF : LEAF;
+
+	// check node redundancy
+#if 1
+	redund = check_node_redun(u);
+	if (redund >= 0) {
+		free(u->rules);
+		return NULL;
+	}
+#endif
 
 	u->nchildren = 0;
 	u->children = malloc(MAX_CHILDREN * sizeof(Trie));
+
+	v->nchildren++;
 
 	if (total_nodes >= trie_nodes_size) {
 		trie_nodes_size += NODES_CHUNK;
@@ -217,16 +297,16 @@ void create_children(Trie *v)
 	Band	*cut;
 	Trie	*u;
 
-	if (curr_depth >= MAX_DEPTH-1) {
+	if (v->depth >= MAX_DEPTH-1) {
 		dump_path(v, 2);
 		printf("Stop working: > trie depth > %d, v[%d]#%d@%d\n", 
 				MAX_DEPTH, v->id, v->nrules, v->depth);
 		exit(1);
 	}
 
-	if (curr_depth > 0)	{
+	if (v->depth > 0)	{
 		for (dim = 0; dim < NFIELDS; dim++)
-			dfs_uncuts[curr_depth][dim] = dfs_uncuts[curr_depth-1][dim];
+			dfs_uncuts[v->depth][dim] = dfs_uncuts[v->depth-1][dim];
 	}
 
 	choose_cut(v);
@@ -239,22 +319,20 @@ void create_children(Trie *v)
 		cut->val = val;
 		u = new_child(v, cut);
 		if ((u != NULL) && (u->nrules > LEAF_RULES)) {
-			curr_depth++;
 			create_children(u);	
 		} else {
-			if (curr_depth > max_depth) {
-				max_depth = curr_depth;
+			if (v->depth > max_depth) {
+				max_depth = v->depth;
 				if (u != NULL) {
 					max_depth_leaf = u;
-					if (max_depth == 18)
-						dump_path(u, 2);
+					//if (max_depth == 18)
+					//	dump_path(u, 2);
 				}
 			}
 		}
 	}
 	v->children = realloc(v->children, v->nchildren*sizeof(Trie));
 	dfs_uncuts[v->depth][cut->dim]++;
-	curr_depth--;
 }
 
 
@@ -268,7 +346,7 @@ Trie* init_trie(Rule *rules, int nrules)
 	dfs_uncuts[0][0] = dfs_uncuts[0][1] = 8;
 	dfs_uncuts[0][2] = dfs_uncuts[0][3] = 4;
 	dfs_uncuts[0][4] = 2;
-	dfs_rules_strip[0] = malloc(nrules*sizeof(Rule));
+	dfs_rules_strip[0][0] = malloc(nrules*sizeof(Rule));
 	rule_map_c2p = malloc(nrules * sizeof(int));
 	rule_map_p2c = malloc(nrules * sizeof(int));
 
@@ -276,11 +354,12 @@ Trie* init_trie(Rule *rules, int nrules)
 	node->type = NONLEAF;
 	node->id = total_nodes++;
 	node->child_id = 0;
+	node->depth = 0;
 	node->nrules = nrules;
 	node->rules = malloc(nrules*sizeof(Rule *));
 	for (i = 0; i < nrules; i++) {
 		node->rules[i] = &rules[i];
-		dfs_rules_strip[0][i] = rules[i];
+		dfs_rules_strip[0][0][i] = rules[i];
 	}
 
 	node->nchildren = 0;
@@ -303,10 +382,8 @@ Trie* build_trie(Rule *rules, int nrules)
 
 	root_node = init_trie(rules, nrules);
 	create_children(root_node);
-/*
 	for (i = 0; i < total_nodes; i++)
 		dump_node(trie_nodes[i], 0);
-*/
 	printf("total nodes:%d, leaf nodes:%d, max depth:%d\n", total_nodes, leaf_nodes, max_depth+1);
 }
 
@@ -391,8 +468,8 @@ void dump_path(Trie *v, int detail)
 		if (detail >= 2) {
 			dump_node(v, detail);
 			for (i = 0; i < v->nrules; i++) {
-				printf("[%4d] ", dfs_rules_strip[v->depth][i].id);
-				dump_rule(&dfs_rules_strip[v->depth][i]);
+				printf("[%4d] ", dfs_rules_strip[v->depth][v->cut.val][i].id);
+				dump_rule(&dfs_rules_strip[v->depth][v->cut.val][i]);
 			}
 			printf("\n");
 		} else

@@ -7,7 +7,7 @@
 #define MAX_CHILDREN	BAND_SIZE
 #define LEAF_RULES		4			// upper limit on rules in lefa nodes
 #define	SMALL_NODE		16			// node is small with rules less than this
-#define MAX_DEPTH		20
+#define MAX_DEPTH		32
 
 
 enum { LEAF, NONLEAF };
