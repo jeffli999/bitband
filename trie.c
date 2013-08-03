@@ -7,6 +7,7 @@
 #define		REDUN_NCHECK	16		// only check at most this number of redundant candidates
 
 int		total_nodes, leaf_nodes, max_depth, trie_nodes_size;
+int		depth_nodes[MAX_DEPTH], depth_leaf_nodes[MAX_DEPTH];
 Trie	*root_node, **trie_nodes, *max_depth_leaf;
 
 
@@ -17,6 +18,7 @@ Rule	*dfs_rules_strip[MAX_DEPTH][BAND_SIZE];
 int		dfs_rule_redun[MAX_DEPTH][REDUN_NRULES][REDUN_NCHECK];
 
 int		*rule_map_p2c, *rule_map_c2p;	// mapping rule order between parent and child
+
 
 
 
@@ -280,8 +282,13 @@ Trie* new_child(Trie *v, Band *cut)
 		trie_nodes = realloc(trie_nodes, trie_nodes_size*sizeof(Trie *));
 	}
 	trie_nodes[total_nodes++] = u;
-	if (u->type == LEAF)
+
+	depth_nodes[u->depth]++;
+	if (u->type == LEAF) {
 		leaf_nodes++;
+		depth_leaf_nodes[u->depth]++;
+	}
+
 	if (total_nodes > 3000000) {
 		dump_path(u, 2);
 		printf("Stop working: > 1000000 rules\n");
@@ -327,8 +334,10 @@ void create_children(Trie *v)
 				max_depth = v->depth;
 				if (u != NULL) {
 					max_depth_leaf = u;
-					//if (max_depth == 18)
-					//	dump_path(u, 2);
+#if 1
+					if (max_depth == 12)
+						dump_path(u, 2);
+#endif
 				}
 			}
 		}
@@ -384,8 +393,15 @@ Trie* build_trie(Rule *rules, int nrules)
 
 	root_node = init_trie(rules, nrules);
 	create_children(root_node);
+#if 0
 	for (i = 0; i < total_nodes; i++)
 		dump_node(trie_nodes[i], 0);
+#endif
+	for (i = 1; i < MAX_DEPTH; i++) {
+		if (depth_nodes[i] == 0)
+			break;
+		printf("depth[%d]: %d/%d\n", i, depth_nodes[i], depth_leaf_nodes[i]);
+	}
 	printf("total nodes:%d, leaf nodes:%d, max depth:%d\n", total_nodes, leaf_nodes, max_depth+1);
 }
 
