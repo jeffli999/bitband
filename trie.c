@@ -206,7 +206,9 @@ int check_node_redun(Trie *u)
 	Range	*r0, *r1;
 
 	child_id = find_node(u->rules, u->nrules, u->parent);
-	if (child_id == -1 || u->cut.dim < 2 || u->cut.dim > 3)
+	if (child_id == -1)
+		return -1;
+	if (u->nrules <= LEAF_RULES || u->cut.dim < 2 || u->cut.dim > 3)
 		return child_id;
 
 	// need more inspection for port cuts even rules are identical
