@@ -5,12 +5,17 @@
 #define		NODES_CHUNK		8192
 #define		REDUN_NRULES	256		// don't check rule redundancy if #rules > it
 #define		REDUN_NCHECK	16		// only check at most this number of redundant candidates
+#define		EFFI_LEVEL		8		// 0: max child rules <= 1/8, 7: max child rules > 7/8
 
-int		LEAF_RULES;
+
+// data structures for statistics
 int		total_nodes, leaf_nodes, max_depth, trie_nodes_size;
-int		depth_nodes[MAX_DEPTH], depth_leaf_nodes[MAX_DEPTH];
-Trie	*root_node, **trie_nodes, *max_depth_leaf;
+int		depth_nodes[MAX_DEPTH], depth_leaf_nodes[MAX_DEPTH], depth_max_node[MAX_DEPTH];
+int		cut_efficiency[MAX_DEPTH][EFFI_LEVEL];
+int		*rule_duplicates;
 
+int		total_rules, LEAF_RULES;
+Trie	*root_node, **trie_nodes, *max_depth_leaf;
 
 // data structures for dfs based trie construction
 Band	dfs_cuts[MAX_DEPTH];
@@ -290,9 +295,10 @@ Trie* new_child(Trie *v, Band *cut)
 		depth_leaf_nodes[u->depth]++;
 	}
 
-	if (total_nodes > 1000000) {
-		dump_path(u, 2);
-		printf("Stop working: > 1,000,000 rules\n");
+	if (total_nodes > 3000000) {
+		//dump_path(u, 2);
+		dump_stats();
+		printf("Stop working: > 3,000,000 rules\n");
 		exit(1);
 	}
 
@@ -301,17 +307,25 @@ Trie* new_child(Trie *v, Band *cut)
 
 
 
+int	calc_cut_efficiency(int depth, int parent_nrules, int nrules)
+{
+	int		i;
+
+	i = (nrules*EFFI_LEVEL)/parent_nrules;
+	cut_efficiency[depth][i]++;
+}
+
+
+
 void create_children(Trie *v)
 {
-	int		dim, val;
+	int		dim, val, max_child_nrules = 0;
 	Band	*cut;
 	Trie	*u;
 
 	if (v->depth >= MAX_DEPTH-1) {
-		dump_path(v, 2);
-		printf("Stop working: > trie depth > %d, v[%d]#%d@%d\n", 
-				MAX_DEPTH, v->id, v->nrules, v->depth);
-		exit(1);
+		//dump_path(v, 2);
+		return;
 	}
 
 	if (v->depth > 0)	{
@@ -328,17 +342,19 @@ void create_children(Trie *v)
 	for (val = 0; val < BAND_SIZE; val++) {
 		cut->val = val;
 		u = new_child(v, cut);
-		if ((u != NULL) && (u->nrules > LEAF_RULES)) {
+		if (u == NULL)
+			continue;
+		if (u->nrules > LEAF_RULES) {
 			create_children(u);	
-		} else {
-			if (v->depth > max_depth) {
-				max_depth = v->depth;
-				if (u != NULL) {
-					max_depth_leaf = u;
-				}
-			}
+		} else if (v->depth > max_depth) {
+			max_depth = v->depth;
+			max_depth_leaf = u;
 		}
+		if (u->nrules > max_child_nrules)
+			max_child_nrules = u->nrules;
 	}
+	calc_cut_efficiency(v->depth, v->nrules, max_child_nrules);
+	depth_max_node[v->depth+1] = max_child_nrules;
 	v->children = realloc(v->children, v->nchildren*sizeof(Trie));
 	dfs_uncuts[v->depth][cut->dim]++;
 }
@@ -376,8 +392,78 @@ Trie* init_trie(Rule *rules, int nrules)
 	trie_nodes = (Trie **) malloc(NODES_CHUNK*sizeof(Trie *));
 	trie_nodes[0] = node;
 	trie_nodes_size = NODES_CHUNK;
+
+	rule_duplicates = calloc(nrules, sizeof(int));
 	
 	return node;
+}
+
+
+
+void calc_most_dup()
+{
+	int		i, j, k, rid, ndup0, ndup1;
+	int		most_dup_rules[17];
+
+	for (k = 0; k < 16; k++)
+		most_dup_rules[k] = -1;
+
+	for (i = 0; i < total_nodes; i++) {
+		for (j = 0; j < trie_nodes[i]->nrules; j++) {
+			rid = trie_nodes[i]->rules[j]->id;
+			rule_duplicates[rid]++;
+		}
+	}
+
+	for (rid = 0; rid < total_rules; rid++) {
+		if (rule_duplicates[rid] <= 64)
+			continue;
+		ndup0 = rule_duplicates[rid];
+		for (k = 15; k >= 0; k--) {
+			if (most_dup_rules[k] == -1)
+				continue;
+			ndup1 = rule_duplicates[most_dup_rules[k]];
+			if (ndup0 < ndup1)
+				break;
+			most_dup_rules[k+1] = most_dup_rules[k];
+		}
+		if (k < 15) {
+			most_dup_rules[k+1] = rid;
+		}
+	}
+
+	for (k = 0; k < 16; k++) {
+		rid = most_dup_rules[k];
+		if (rid < 0)
+			break;
+		printf("rule[%d]: %d times\n", rid, rule_duplicates[rid]);
+	}
+}
+
+
+
+void dump_stats()
+{
+	int		i, j;
+
+#if 1
+	for (i = 0; i < total_nodes; i++)
+		dump_node(trie_nodes[i], 0);
+#endif
+	//dump_path(trie_nodes[2422], 2);
+	
+	//calc_most_dup();
+	for (i = 1; i < MAX_DEPTH; i++) {
+		if (depth_nodes[i] == 0)
+			break;
+		printf("depth[%d]:%d/%d max_node:%d, \t{", 
+				i, depth_nodes[i], depth_leaf_nodes[i], depth_max_node[i]);
+		for (j = 0; j < EFFI_LEVEL; j++)
+			printf("%d, ", cut_efficiency[i][j]);
+		printf("}\n");
+	}
+
+	printf("total nodes:%d, leaf nodes:%d, max depth:%d\n", total_nodes, leaf_nodes, max_depth+1);
 }
 
 
@@ -388,20 +474,12 @@ Trie* build_trie(Rule *rules, int nrules, int leaf_rules)
 	Trie*	v;
 	int		i;
 
+	total_rules = nrules;
 	LEAF_RULES = leaf_rules;
 	root_node = init_trie(rules, nrules);
 	create_children(root_node);
-#if 0
-	for (i = 0; i < total_nodes; i++)
-		dump_node(trie_nodes[i], 0);
-#endif
-	dump_path(trie_nodes[22934], 2);
-	for (i = 1; i < MAX_DEPTH; i++) {
-		if (depth_nodes[i] == 0)
-			break;
-		printf("depth[%d]: %d/%d\n", i, depth_nodes[i], depth_leaf_nodes[i]);
-	}
-	printf("total nodes:%d, leaf nodes:%d, max depth:%d\n", total_nodes, leaf_nodes, max_depth+1);
+
+	dump_stats();
 }
 
 

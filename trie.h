@@ -6,7 +6,7 @@
 
 #define MAX_CHILDREN	BAND_SIZE
 #define	SMALL_NODE		16			// node is small with rules less than this
-#define MAX_DEPTH		32
+#define MAX_DEPTH		16
 
 
 enum { LEAF, NONLEAF };
@@ -38,6 +38,7 @@ void dump_node_rules(Trie *v);
 void dump_nodes(int max, int min);
 void dump_rules(Rule **rules, int nrules);
 void dump_path(Trie *v, int detail);
+void dump_stats();
 
 
 #endif
