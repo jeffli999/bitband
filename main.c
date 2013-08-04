@@ -10,10 +10,20 @@ FILE		*fp = NULL;
 Rule		*ruleset = NULL;
 int			num_rules = 0;
 
+
 int main(int argc, char **argv)
 {
+	int		leaf_rules;
+	
+	if (argc != 3) {
+		printf("%s <leaf_rules> <bench>\n", argv[0]);
+		exit(1);
+	}
 
-	fp = fopen(argv[1], "r");
+	leaf_rules = atoi(argv[1]);
+	leaf_rules = leaf_rules==0 ? 4 : leaf_rules;
+
+	fp = fopen(argv[2], "r");
 
 	if (fp == NULL) {
 		fprintf(stderr, "Failed to open file\n");
@@ -23,7 +33,7 @@ int main(int argc, char **argv)
 	num_rules = loadrules(fp, &ruleset);
 	fclose(fp);
 	//dump_ruleset(ruleset, num_rules);
-	build_trie(ruleset, num_rules);
+	build_trie(ruleset, num_rules, leaf_rules);
 
 	//test_band();
 }

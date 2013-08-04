@@ -5,7 +5,6 @@
 #include "rule.h"
 
 #define MAX_CHILDREN	BAND_SIZE
-#define LEAF_RULES		8			// upper limit on rules in lefa nodes
 #define	SMALL_NODE		16			// node is small with rules less than this
 #define MAX_DEPTH		32
 
@@ -31,9 +30,9 @@ struct trie_t {
 };
 
 
-Trie* build_trie(Rule *rules, int nrules);
+Trie* build_trie(Rule *rules, int nrules, int leaf_rules);
 
-void dump_trie(Trie *root);
+void dump_trie(Trie *root, int detail);
 void dump_node(Trie *v, int simple);
 void dump_node_rules(Trie *v);
 void dump_nodes(int max, int min);

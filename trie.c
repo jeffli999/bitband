@@ -6,6 +6,7 @@
 #define		REDUN_NRULES	256		// don't check rule redundancy if #rules > it
 #define		REDUN_NCHECK	16		// only check at most this number of redundant candidates
 
+int		LEAF_RULES;
 int		total_nodes, leaf_nodes, max_depth, trie_nodes_size;
 int		depth_nodes[MAX_DEPTH], depth_leaf_nodes[MAX_DEPTH];
 Trie	*root_node, **trie_nodes, *max_depth_leaf;
@@ -289,9 +290,9 @@ Trie* new_child(Trie *v, Band *cut)
 		depth_leaf_nodes[u->depth]++;
 	}
 
-	if (total_nodes > 3000000) {
+	if (total_nodes > 1000000) {
 		dump_path(u, 2);
-		printf("Stop working: > 1000000 rules\n");
+		printf("Stop working: > 1,000,000 rules\n");
 		exit(1);
 	}
 
@@ -334,10 +335,6 @@ void create_children(Trie *v)
 				max_depth = v->depth;
 				if (u != NULL) {
 					max_depth_leaf = u;
-#if 1
-					if (max_depth == 12)
-						dump_path(u, 2);
-#endif
 				}
 			}
 		}
@@ -386,17 +383,19 @@ Trie* init_trie(Rule *rules, int nrules)
 
 
 // trie construction with a depth-first traverse (dfs)
-Trie* build_trie(Rule *rules, int nrules)
+Trie* build_trie(Rule *rules, int nrules, int leaf_rules)
 {
 	Trie*	v;
 	int		i;
 
+	LEAF_RULES = leaf_rules;
 	root_node = init_trie(rules, nrules);
 	create_children(root_node);
 #if 0
 	for (i = 0; i < total_nodes; i++)
 		dump_node(trie_nodes[i], 0);
 #endif
+	dump_path(trie_nodes[22934], 2);
 	for (i = 1; i < MAX_DEPTH; i++) {
 		if (depth_nodes[i] == 0)
 			break;
@@ -476,22 +475,29 @@ void dump_node(Trie *v, int detail)
 
 void dump_path(Trie *v, int detail)
 {
-	int		i;
+	int		depth = v->depth, i;
+	Trie 	*path[MAX_DEPTH];
 
-	while (v->id != 0) {
-		for (i = 0; i < NFIELDS; i++) {
-			printf("%d-", dfs_uncuts[v->depth][i]);
-		}
-		printf("\n");
-		if (detail >= 2) {
-			dump_node(v, detail);
-			for (i = 0; i < v->nrules; i++) {
-				printf("[%4d] ", dfs_rules_strip[v->depth][v->cut.val][i].id);
-				dump_rule(&dfs_rules_strip[v->depth][v->cut.val][i]);
-			}
-			printf("\n");
-		} else
-			dump_node(v, 0);
+	while (v != NULL) {
+		path[v->depth] = v;
 		v = v->parent;
 	}
+
+	for (i = 0; i < depth; i++) {
+		if (path[i]->nrules <= 16)
+			dump_node(path[i], detail);
+		else
+			dump_node(path[i], 0);
+	}
+}
+
+
+
+void dump_trie(Trie *v, int detail)
+{
+	int		i;
+
+	dump_node(v, detail);
+	for (i = 0; i < v->nchildren; i++)
+		dump_trie(&v->children[i], detail);
 }
