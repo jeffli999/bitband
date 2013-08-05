@@ -21,6 +21,7 @@ struct trie_t {
 	uint16_t	nequals;		// number of equal nodes pointing to me
 	int			nrules;
 	Rule**		rules;
+	Rule*		full_cover;		
 
 	Trie*		parent;
 	Band		cut;

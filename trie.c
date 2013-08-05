@@ -84,6 +84,9 @@ int select_rules(Rule *rules_parent, Rule *rules_child, int nrules_parent, Band 
 
 
 
+// for each rule in v, get a list of earlier rules which might be candidate of redundant rules
+// to this one, this list is used to speed up rule redundancy check process (a full computation
+// on all five fields and scan through all earlier rules for every cut value is very inefficient)
 void calc_rule_redun(Trie *v, Band *cut)
 {
 	Rule	*rules = dfs_rules_strip[v->depth][v->cut.val];
@@ -188,13 +191,13 @@ enum {NOTFOUND, FOUND, INVALID};
 
 
 // return the child id with identical rule set, return -1 if not found
-int find_node(Rule **ruleset, int nrules, Trie *parent)
+int find_node(Rule **ruleset, int nrules, Trie *parent, int start)
 {
 	Rule	**rules_child;
 	int		nrules_child, i;
 	
 	// reverse order checking as neighbor nodes are more likely to be redundant
-	for (i = parent->nchildren-1; i >= 0; i--) {
+	for (i = start; i >= 0; i--) {
 		nrules_child = parent->children[i].nrules;
 		if (nrules_child != nrules)
 			continue;
@@ -213,25 +216,27 @@ int check_node_redun(Trie *u)
 	Rule	*rules0, *rules1;
 	Range	*r0, *r1;
 
-	child_id = find_node(u->rules, u->nrules, u->parent);
+	child_id = find_node(u->rules, u->nrules, u->parent, u->parent->nchildren-1);
 	if (child_id == -1)
 		return -1;
 	if (u->nrules <= LEAF_RULES || u->cut.dim < 2 || u->cut.dim > 3)
 		return child_id;
 
 	// need more inspection for port cuts even rules are identical
-	rules0 = dfs_rules_strip[u->depth][u->cut.val];
-	rules1 = dfs_rules_strip[u->depth][u->parent->children[child_id].cut.val];
-	for (i = 0; i < u->nrules; i++) {
-		r0 = &rules0[i].field[u->cut.dim];
-		r1 = &rules1[i].field[u->cut.dim];
-		if (r0->lo != r1->lo || r0->hi != r1->hi)
-			break;
+	while (child_id >= 0) {
+		rules0 = dfs_rules_strip[u->depth][u->cut.val];
+		rules1 = dfs_rules_strip[u->depth][u->parent->children[child_id].cut.val];
+		for (i = 0; i < u->nrules; i++) {
+			r0 = &rules0[i].field[u->cut.dim];
+			r1 = &rules1[i].field[u->cut.dim];
+			if (r0->lo != r1->lo || r0->hi != r1->hi)
+				break;
+		}
+		if (i == u->nrules)
+			return child_id;
+		child_id = find_node(u->rules, u->nrules, u->parent, child_id-1);
 	}
-	if (i == u->nrules)
-		return -1;
-	else
-		return child_id;
+	return -1;
 }
 
 
@@ -240,6 +245,23 @@ int check_node_redun(Trie *u)
  * Section for major trie construction functions 
  *
  *****************************************************************************/
+
+int full_cover_rule(Rule *rule, Trie *parent)
+{
+	int		dim, nbits, hi;
+
+	for (dim = 0; dim < NFIELDS; dim++) {
+		if (rule->field[dim].lo != 0)
+			return 0;
+		nbits = dfs_uncuts[parent->depth][dim]*BAND_BITS;
+		hi = nbits == 32 ? 0xffffffff : (1 << nbits) - 1;
+		if (rule->field[dim].hi != hi)
+			return 0;
+	}
+	return 1;
+}
+
+
 
 Trie* new_child(Trie *v, Band *cut)
 {
@@ -259,6 +281,14 @@ Trie* new_child(Trie *v, Band *cut)
 	u->nrules = select_rules(rules_parent, rules_child, v->nrules, cut, v->depth);
 	if (u->nrules == 0)
 		return NULL;
+#if 1
+	if (full_cover_rule(&rules_child[u->nrules-1], v)) {
+		u->full_cover = v->rules[rule_map_c2p[u->nrules-1]];
+		u->nrules--;
+	} else
+#endif
+		u->full_cover = v->full_cover;
+
 	u->rules = malloc(u->nrules*sizeof(Rule *));
 	for (i = 0; i < u->nrules; i++)
 		u->rules[i] = v->rules[rule_map_c2p[i]];
@@ -268,7 +298,7 @@ Trie* new_child(Trie *v, Band *cut)
 	u->id = total_nodes;
 	u->child_id = v->nchildren;
 	u->type = u->nrules > LEAF_RULES ? NONLEAF : LEAF;
-
+	u->nchildren = 0;
 	// check node redundancy
 #if 1
 	redund = check_node_redun(u);
@@ -277,10 +307,7 @@ Trie* new_child(Trie *v, Band *cut)
 		return NULL;
 	}
 #endif
-
-	u->nchildren = 0;
 	u->children = malloc(MAX_CHILDREN * sizeof(Trie));
-
 	v->nchildren++;
 
 	if (total_nodes >= trie_nodes_size) {
@@ -385,6 +412,7 @@ Trie* init_trie(Rule *rules, int nrules)
 		node->rules[i] = &rules[i];
 		dfs_rules_strip[0][0][i] = rules[i];
 	}
+	node->full_cover = NULL;
 
 	node->nchildren = 0;
 	node->children = malloc(MAX_CHILDREN * sizeof(Trie));
@@ -532,7 +560,10 @@ void dump_node(Trie *v, int detail)
 	if (v->id > 0) {
 		printf("d%d-b%d-v%x", v->cut.dim, v->cut.bid, v->cut.val);
 	}
-	printf("  #N:%d\n", v->nchildren);
+	printf("  #N:%d", v->nchildren);
+	if (v->full_cover != NULL)
+		printf(",  Def[%d]", v->full_cover->id);
+	printf("\n");
 
 	if (detail == 1) {
 		for (i = 0; i < v->nrules; i++)
