@@ -22,6 +22,21 @@ int		*rule_map_p2c, *rule_map_c2p;	// mapping rule order between parent and chil
 
 
 
+int get_subtrie_nodes(Trie *v)
+{
+	int		i, n = 0;
+
+	if (v->nchildren == 0)
+		return 1;
+
+	for (i = 0; i < v->nchildren; i++) {
+		n += get_subtrie_nodes(&v->children[i]);
+	}
+
+	return n;
+}
+
+
 
 /******************************************************************************
  *
@@ -237,6 +252,53 @@ int check_node_redun(Trie *u)
 
 /******************************************************************************
  *
+ * Section for merging two nodes with inclusion relationship (to reduce memory
+ * and processing time without affecting worst-case performance (and limited
+ * average performance)
+ *
+ *****************************************************************************/
+
+int	node_inclusion(Trie *u)
+{
+	Trie	*v;
+	Range	*r0, *r1;
+	int		i, j, k;
+
+	for (i = 0; i < u->parent->nchildren; i++) {
+		v = &u->parent->children[i];
+		if (v->nrules <= u->nrules)
+			continue;
+		j = k = 0;
+		while (j < u->nrules && k < v->nrules) {
+			if (u->rules[j]->id == v->rules[k]->id) {
+				if (u->cut.dim == 2 || u->cut.dim == 3)	{
+					r0 = &dfs_rules_strip[u->depth][u->cut.val][j].field[u->cut.dim];
+					r1 = &dfs_rules_strip[v->depth][v->cut.val][j].field[v->cut.dim];
+					if (r0->lo != r1->lo || r0->hi != r1->hi)
+						break;
+				}
+				j++; k++;
+			} else if (u->rules[j]->id > v->rules[k]->id) {
+				k++;
+			} else {
+				break;
+			}
+		}
+		if (j == u->nrules) {
+			if (u->full_cover == v->full_cover)
+				return 1;
+			for (k++; k < v->nrules; k++) {
+				if (u->full_cover == v->rules[k])
+					return 1;
+			}
+		}	
+	}
+	return 0;
+}
+
+
+/******************************************************************************
+ *
  * Section for major trie construction functions 
  *
  *****************************************************************************/
@@ -263,7 +325,7 @@ Trie* new_child(Trie *v, Band *cut)
 	Trie	*u;
 	Rule	*rules_parent, *rules_child;
 	int		redund, i;
-   
+
 	if (dfs_rules_strip[v->depth+1][cut->val] == NULL)
 		dfs_rules_strip[v->depth+1][cut->val] = malloc(v->nrules*sizeof(Rule));
 	else
@@ -302,6 +364,14 @@ Trie* new_child(Trie *v, Band *cut)
 		return NULL;
 	}
 #endif
+
+#if 1
+	if (u->nrules > LEAF_RULES && node_inclusion(u)) {
+		free(u->rules);
+		return NULL;
+	}
+#endif
+
 	u->children = malloc(MAX_CHILDREN * sizeof(Trie));
 	v->nchildren++;
 

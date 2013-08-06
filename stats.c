@@ -158,7 +158,7 @@ void dump_stats()
 #endif
 	//dump_path(trie_nodes[2422], 2);
 	
-	calc_rulestat();
+	//calc_rulestat();
 	calc_most_dup();
 	calc_depth_nodes();
 	printf("Nodes at vaious depths\n");
