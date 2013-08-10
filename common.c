@@ -21,6 +21,13 @@ int range_cover(Range a, Range b)
 }
 
 
+inline
+int range_equal(Range a, Range b)
+{
+	return ((a.lo == b.lo) && (a.hi == b.hi));
+}
+
+
 // return intersection of the two ranges
 inline
 Range range_sect(Range a, Range b)
