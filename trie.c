@@ -386,7 +386,7 @@ Trie* new_child(Trie *v, Band *cut)
 
 	if (total_nodes > 2000000) {
 		//dump_path(u, 2);
-		dump_stats();
+		//dump_stats();
 		printf("Stop working: > 3,000,000 rules\n");
 		exit(1);
 	}
@@ -485,7 +485,7 @@ Trie* build_trie(Rule *rules, int nrules, int leaf_rules)
 	root_node = init_trie(rules, nrules);
 	create_children(root_node);
 
-	dump_stats();
+	//dump_stats();
 }
 
 
