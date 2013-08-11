@@ -32,8 +32,9 @@ int main(int argc, char **argv)
 
 	num_rules = loadrules(fp, &ruleset);
 	fclose(fp);
+	build_field_poset(ruleset, num_rules);
 	//dump_ruleset(ruleset, num_rules);
-	build_trie(ruleset, num_rules, leaf_rules);
+	//build_trie(ruleset, num_rules, leaf_rules);
 
 	//test_band();
 }
